@@ -28,7 +28,8 @@
     "react-native-svg": "15.12.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.20.0"
+    "@babel/core": "^7.20.0",
+    "babel-preset-expo": "~13.0.0"
   },
   "private": true
 }
