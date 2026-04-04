@@ -29,6 +29,7 @@
         "backgroundColor": "#0f0f1a"
       },
       "package": "com.neckguard.app",
+      "kotlinVersion": "2.1.0",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
