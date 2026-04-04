@@ -43,14 +43,13 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
           "color": "#6c63ff",
-          "sounds": [],
-          "mode": "production"
+          "sounds": []
         }
       ],
       "expo-background-fetch",
-      "expo-task-manager"
+      "expo-task-manager",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
