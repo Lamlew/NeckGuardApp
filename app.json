@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "NeckGuard",
+    "slug": "neckguard",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0f0f1a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.neckguard.app",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ],
+        "NSMotionUsageDescription": "NeckGuard uses your device's motion sensors to track your phone angle and protect your neck health.",
+        "UIRequiresFullScreen": true
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f0f1a"
+      },
+      "package": "com.neckguard.app",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "FOREGROUND_SERVICE",
+        "BODY_SENSORS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#6c63ff",
+          "sounds": [],
+          "mode": "production"
+        }
+      ],
+      "expo-background-fetch",
+      "expo-task-manager"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e5a0e12f-5535-46f5-a03f-dd369b7fcda9"
+      }
+    }
+  }
+}
