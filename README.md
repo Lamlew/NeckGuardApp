@@ -4,7 +4,7 @@ A teen-friendly React Native app that tracks your phone angle and reminds you to
 
 ## How it Works
 
-The app uses your phone's accelerometer to estimate how far you're tilting your head down. That angle maps directly to neck stress (cervical flexion load).
+The app uses your phone's gyroscope and accelerometer to estimate how far you're tilting your head down. That angle maps directly to neck stress (cervical flexion load).
 
 | Angle       | Zone         | Reminder Interval | Neck Load   |
 |-------------|--------------|-------------------|-------------|
@@ -13,7 +13,7 @@ The app uses your phone's accelerometer to estimate how far you're tilting your 
 | 35° – 45°   | 😬 Moderate   | Every 1:30 min    | ~40–49 lbs  |
 | > 45°       | 🚨 Critical   | Every 1 min       | ~50–60+ lbs |
 
-If you stay in the **same bad posture for 10 minutes**, a full-screen pop-up covers your screen and won't go away until you acknowledge it.
+If you stay in the **same bad posture for 3 minutes**, a push notification will remind you to fix your posture with teen-friendly messages.
 
 ---
 
