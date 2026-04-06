@@ -28,6 +28,7 @@ export default function useNeckAngle(isTracking) {
   const [angle, setAngle] = useState(0);
   const [zone, setZone] = useState(getPostureZone(0));
   const [isAvailable, setIsAvailable] = useState(true);
+  const [sampleTick, setSampleTick] = useState(0);
 
   const samplesRef = useRef([]);
   const subscriptionRef = useRef(null);
@@ -49,6 +50,7 @@ export default function useNeckAngle(isTracking) {
     const smoothed = Math.round(avg);
     setAngle(smoothed);
     setZone(getPostureZone(smoothed));
+    setSampleTick((prev) => prev + 1);
   }, []);
 
   useEffect(() => {
@@ -87,5 +89,5 @@ export default function useNeckAngle(isTracking) {
     };
   }, [isTracking, processReading]);
 
-  return { angle, zone, isAvailable };
+  return { angle, zone, isAvailable, sampleTick };
 }

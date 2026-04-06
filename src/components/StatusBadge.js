@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function StatusBadge({ zone, nextReminderIn }) {
+export default function StatusBadge({ zone, nextReminderIn, isPausedByConstantAngle = false }) {
   const minutes = Math.floor(nextReminderIn / 60);
   const seconds = nextReminderIn % 60;
   const timeStr = `${minutes}:${String(seconds).padStart(2, '0')}`;
@@ -11,7 +11,11 @@ export default function StatusBadge({ zone, nextReminderIn }) {
       <Text style={styles.emoji}>{zone.emoji}</Text>
       <View style={styles.textBlock}>
         <Text style={[styles.status, { color: zone.color }]}>{zone.label}</Text>
-        <Text style={styles.timer}>Next check in <Text style={{ color: zone.color, fontWeight: '700' }}>{timeStr}</Text></Text>
+        <Text style={styles.timer}>
+          {isPausedByConstantAngle
+            ? 'Paused: constant angle detected'
+            : <>Next alert in <Text style={{ color: zone.color, fontWeight: '700' }}>{timeStr}</Text></>}
+        </Text>
       </View>
     </View>
   );

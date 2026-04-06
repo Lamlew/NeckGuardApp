@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,39 +6,72 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  AppState,
-  Platform,
+  TextInput,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import useNeckAngle from '../hooks/useNeckAngle';
 import AngleGauge from '../components/AngleGauge';
 import StatusBadge from '../components/StatusBadge';
-import PostureOverlayScreen from './PostureOverlayScreen';
 import {
   requestNotificationPermissions,
-  sendPostureAlert,
   cancelAllNotifications,
+  schedulePostureAlertIn,
+  cancelNotificationById,
   addNotificationResponseListener,
 } from '../services/NotificationService';
-import { OVERRIDE_POPUP_MS, getPostureZone } from '../constants/posture';
+import { getPostureZone } from '../constants/posture';
+import { TRACKING_CONFIG } from '../constants/tracking';
 
 export default function HomeScreen() {
+  const defaultSettingsDraft = useMemo(
+    () => ({
+      mildAlertMin: String(Math.round(TRACKING_CONFIG.mildAlertMs / 60000)),
+      dangerAlertMin: String(Math.round(TRACKING_CONFIG.dangerAlertMs / 60000)),
+      constantSuppressMin: String(Math.round(TRACKING_CONFIG.constantSuppressMs / 60000)),
+    }),
+    []
+  );
+
   const [isTracking, setIsTracking] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [showOverlay, setShowOverlay] = useState(false);
   const [nextReminderIn, setNextReminderIn] = useState(0);
+  const [isPausedByConstantAngle, setIsPausedByConstantAngle] = useState(false);
   const [sessionStats, setSessionStats] = useState({ totalTime: 0, criticalTime: 0 });
+  const [settingsDraft, setSettingsDraft] = useState(defaultSettingsDraft);
 
-  const { angle, zone, isAvailable } = useNeckAngle(isTracking);
+  const { angle, zone, isAvailable, sampleTick } = useNeckAngle(isTracking);
+
+  const settings = useMemo(() => {
+    const parseNumber = (value, fallback) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+
+    return {
+      mildAlertMs: Math.round(
+        parseNumber(settingsDraft.mildAlertMin, TRACKING_CONFIG.mildAlertMs / 60000) * 60000
+      ),
+      dangerAlertMs: Math.round(
+        parseNumber(settingsDraft.dangerAlertMin, TRACKING_CONFIG.dangerAlertMs / 60000) * 60000
+      ),
+      constantSuppressMs: Math.round(
+        parseNumber(settingsDraft.constantSuppressMin, TRACKING_CONFIG.constantSuppressMs / 60000) * 60000
+      ),
+      constantDelta: TRACKING_CONFIG.constantDelta,
+    };
+  }, [settingsDraft]);
 
   // Refs for timers (not state — so updates don't cause unnecessary re-renders)
-  const reminderTimerRef = useRef(null);
-  const overrideTimerRef = useRef(null);
   const countdownIntervalRef = useRef(null);
+  const episodeEndTimerRef = useRef(null);
   const sessionTimerRef = useRef(null);
-  const lastZoneKeyRef = useRef(null);
-  const overrideFiredRef = useRef(false);
-  const appStateRef = useRef(AppState.currentState);
+  const stressStartRef = useRef(null);
+  const constantStartRef = useRef(null);
+  const lastAngleRef = useRef(null);
+  const isConstantSuppressedRef = useRef(false);
+  const activeStressZoneKeyRef = useRef(null);
+  const alertNotificationIdRef = useRef(null);
+  const cycleVersionRef = useRef(0);
 
   // ─── Permissions ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -53,14 +86,6 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, []);
 
-  // ─── App state (foreground/background) ───────────────────────────────────
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (nextState) => {
-      appStateRef.current = nextState;
-    });
-    return () => sub.remove();
-  }, []);
-
   // ─── Session timer ────────────────────────────────────────────────────────
   useEffect(() => {
     if (isTracking) {
@@ -69,7 +94,7 @@ export default function HomeScreen() {
           ...prev,
           totalTime: prev.totalTime + 1,
           criticalTime:
-            zone.key === 'CRITICAL' || zone.key === 'MODERATE'
+            zone.key === 'CRITICAL' || zone.key === 'MILD' || zone.key === 'MODERATE'
               ? prev.criticalTime + 1
               : prev.criticalTime,
         }));
@@ -82,85 +107,155 @@ export default function HomeScreen() {
 
   // ─── Clear all timers helper ──────────────────────────────────────────────
   const clearAllTimers = useCallback(() => {
-    clearTimeout(reminderTimerRef.current);
-    clearTimeout(overrideTimerRef.current);
     clearInterval(countdownIntervalRef.current);
-    reminderTimerRef.current = null;
-    overrideTimerRef.current = null;
+    clearTimeout(episodeEndTimerRef.current);
     countdownIntervalRef.current = null;
+    episodeEndTimerRef.current = null;
   }, []);
 
-  // ─── Schedule the next reminder ───────────────────────────────────────────
-  const scheduleReminder = useCallback(
-    (currentZone) => {
-      clearAllTimers();
-      overrideFiredRef.current = false;
+  const clearScheduledStressNotifications = useCallback(async () => {
+    await cancelNotificationById(alertNotificationIdRef.current);
+    alertNotificationIdRef.current = null;
+  }, []);
 
-      const delay = currentZone.reminderMs;
-      setNextReminderIn(Math.round(delay / 1000));
+  const resetStressEpisode = useCallback(() => {
+    cycleVersionRef.current += 1;
 
-      // Countdown ticker
+    const hasActiveStressCycle =
+      !!stressStartRef.current ||
+      !!episodeEndTimerRef.current ||
+      !!activeStressZoneKeyRef.current ||
+      !!alertNotificationIdRef.current;
+
+    if (!hasActiveStressCycle) return;
+
+    clearAllTimers();
+    setNextReminderIn(0);
+    stressStartRef.current = null;
+    activeStressZoneKeyRef.current = null;
+    void clearScheduledStressNotifications();
+  }, [clearAllTimers, clearScheduledStressNotifications]);
+
+  const startStressEpisode = useCallback(
+    async (currentZone, delayMs) => {
+      if (stressStartRef.current || isConstantSuppressedRef.current) return;
+
+      const now = Date.now();
+      const cycleVersion = cycleVersionRef.current;
+      stressStartRef.current = now;
+      activeStressZoneKeyRef.current = currentZone.key;
+      setNextReminderIn(Math.round(delayMs / 1000));
+
       countdownIntervalRef.current = setInterval(() => {
-        setNextReminderIn((prev) => Math.max(prev - 1, 0));
+        const elapsedSec = Math.floor((Date.now() - now) / 1000);
+        const remaining = Math.max(0, Math.round(delayMs / 1000) - elapsedSec);
+        setNextReminderIn(remaining);
       }, 1000);
 
-      // Reminder fire
-      reminderTimerRef.current = setTimeout(async () => {
-        await sendPostureAlert(currentZone);
-        scheduleReminder(currentZone); // reschedule for same zone
-      }, delay);
+      episodeEndTimerRef.current = setTimeout(() => {
+        if (!isTracking || isConstantSuppressedRef.current) return;
+        resetStressEpisode();
+      }, delayMs);
 
-      // 10-minute override popup (only if hasn't changed zone for 10 min)
-      overrideTimerRef.current = setTimeout(() => {
-        if (!overrideFiredRef.current) {
-          overrideFiredRef.current = true;
-          setShowOverlay(true);
-        }
-      }, OVERRIDE_POPUP_MS);
+      const notificationId = await schedulePostureAlertIn(
+        currentZone,
+        Math.round(delayMs / 1000),
+        'Alert: '
+      );
+
+      if (cycleVersion !== cycleVersionRef.current) {
+        await cancelNotificationById(notificationId);
+        return;
+      }
+
+      alertNotificationIdRef.current = notificationId;
     },
-    [clearAllTimers]
+    [isTracking, resetStressEpisode]
   );
 
-  // ─── React to zone changes ────────────────────────────────────────────────
+  // ─── React to angle changes (zone alerts + constant-angle suppression) ────
   useEffect(() => {
     if (!isTracking) return;
 
-    // Zone changed — reset the 10-min override timer
-    if (zone.key !== lastZoneKeyRef.current) {
-      lastZoneKeyRef.current = zone.key;
-      scheduleReminder(zone);
+    const now = Date.now();
+    const isUnchanged =
+      lastAngleRef.current != null &&
+      Math.abs(angle - lastAngleRef.current) <= settings.constantDelta;
+
+    if (isUnchanged) {
+      if (!constantStartRef.current) {
+        constantStartRef.current = now;
+      } else if (now - constantStartRef.current >= settings.constantSuppressMs) {
+        isConstantSuppressedRef.current = true;
+        setIsPausedByConstantAngle(true);
+        resetStressEpisode();
+      }
+    } else {
+      constantStartRef.current = null;
+      isConstantSuppressedRef.current = false;
+      setIsPausedByConstantAngle(false);
     }
-  }, [zone.key, isTracking, scheduleReminder]);
+
+    lastAngleRef.current = angle;
+
+    if (isConstantSuppressedRef.current) {
+      resetStressEpisode();
+      return;
+    }
+
+    const shouldNotifyMild = zone.key === 'MILD' || zone.key === 'MODERATE';
+    const shouldNotifyDanger = zone.key === 'CRITICAL';
+
+    if (!shouldNotifyMild && !shouldNotifyDanger) {
+      resetStressEpisode();
+      return;
+    }
+
+    const alertDelayMs = shouldNotifyDanger ? settings.dangerAlertMs : settings.mildAlertMs;
+
+    if (!stressStartRef.current) {
+      void startStressEpisode(zone, alertDelayMs);
+      return;
+    }
+
+    if (activeStressZoneKeyRef.current !== zone.key) {
+      resetStressEpisode();
+      void startStressEpisode(zone, alertDelayMs);
+    }
+  }, [sampleTick, angle, zone, isTracking, startStressEpisode, resetStressEpisode, settings]);
 
   // ─── Start/Stop tracking ──────────────────────────────────────────────────
   const handleToggleTracking = useCallback(async () => {
     if (isTracking) {
       setIsTracking(false);
-      clearAllTimers();
+      resetStressEpisode();
       cancelAllNotifications();
-      lastZoneKeyRef.current = null;
-      overrideFiredRef.current = false;
-      setNextReminderIn(0);
-      setShowOverlay(false);
+      constantStartRef.current = null;
+      isConstantSuppressedRef.current = false;
+      setIsPausedByConstantAngle(false);
+      activeStressZoneKeyRef.current = null;
+      lastAngleRef.current = null;
     } else {
       setIsTracking(true);
       setSessionStats({ totalTime: 0, criticalTime: 0 });
-      // Zone-based scheduling starts from the useEffect above
+      setNextReminderIn(0);
+      constantStartRef.current = null;
+      isConstantSuppressedRef.current = false;
+      setIsPausedByConstantAngle(false);
+      activeStressZoneKeyRef.current = null;
+      lastAngleRef.current = null;
     }
-  }, [isTracking, clearAllTimers]);
+  }, [isTracking, resetStressEpisode]);
 
-  // ─── Dismiss overlay ──────────────────────────────────────────────────────
-  const handleDismissOverlay = useCallback(() => {
-    setShowOverlay(false);
-    overrideFiredRef.current = false;
-    // Resume scheduling from current zone
-    scheduleReminder(zone);
-  }, [zone, scheduleReminder]);
+  const handleResetSettings = useCallback(() => {
+    setSettingsDraft(defaultSettingsDraft);
+    resetStressEpisode();
+  }, [defaultSettingsDraft, resetStressEpisode]);
 
   // ─── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
-    return () => clearAllTimers();
-  }, [clearAllTimers]);
+    return () => resetStressEpisode();
+  }, [resetStressEpisode]);
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTime = (seconds) => {
@@ -217,7 +312,11 @@ export default function HomeScreen() {
         {/* Status badge */}
         {isTracking && (
           <View style={styles.section}>
-            <StatusBadge zone={zone} nextReminderIn={nextReminderIn} />
+            <StatusBadge
+              zone={zone}
+              nextReminderIn={nextReminderIn}
+              isPausedByConstantAngle={isPausedByConstantAngle}
+            />
           </View>
         )}
 
@@ -226,10 +325,10 @@ export default function HomeScreen() {
           <View style={styles.zoneGuide}>
             <Text style={styles.sectionTitle}>Angle Guide</Text>
             {[
-              { range: '< 25°', label: 'Optimal', color: '#00e676', interval: 'every 5 min' },
-              { range: '25–35°', label: 'Mild Strain', color: '#ffeb3b', interval: 'every 3 min' },
-              { range: '35–45°', label: 'Moderate', color: '#ff9800', interval: 'every 1:30 min' },
-              { range: '> 45°', label: 'Critical', color: '#f44336', interval: 'every 1 min' },
+              { range: '< 25°', label: 'Good', color: '#00e676', interval: 'no alerts' },
+              { range: '25–45°', label: 'Mild', color: '#ffeb3b', interval: 'alert after 5 min' },
+              { range: '> 45°', label: 'Danger', color: '#f44336', interval: 'alert after 3 min' },
+              { range: 'Same angle 2 min', label: 'Constant Angle', color: '#6c63ff', interval: 'pause counting' },
             ].map((z) => (
               <View key={z.label} style={styles.zoneRow}>
                 <View style={[styles.zoneDot, { backgroundColor: z.color }]} />
@@ -259,6 +358,57 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Prototype settings */}
+        <View style={styles.settingsCard}>
+          <Text style={styles.sectionTitle}>Prototype Settings</Text>
+
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Mild alert (min)</Text>
+            <TextInput
+              style={styles.settingInput}
+              value={settingsDraft.mildAlertMin}
+              onChangeText={(value) => setSettingsDraft((prev) => ({ ...prev, mildAlertMin: value }))}
+              keyboardType="numeric"
+              placeholder="5"
+              placeholderTextColor="#666"
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Danger alert (min)</Text>
+            <TextInput
+              style={styles.settingInput}
+              value={settingsDraft.dangerAlertMin}
+              onChangeText={(value) =>
+                setSettingsDraft((prev) => ({ ...prev, dangerAlertMin: value }))
+              }
+              keyboardType="numeric"
+              placeholder="3"
+              placeholderTextColor="#666"
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Constant angle pause (min)</Text>
+            <TextInput
+              style={styles.settingInput}
+              value={settingsDraft.constantSuppressMin}
+              onChangeText={(value) => setSettingsDraft((prev) => ({ ...prev, constantSuppressMin: value }))}
+              keyboardType="numeric"
+              placeholder="2"
+              placeholderTextColor="#666"
+            />
+          </View>
+
+          <TouchableOpacity
+            style={styles.resetSettingsButton}
+            onPress={handleResetSettings}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.resetSettingsText}>Reset to defaults</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* CTA Button */}
         <TouchableOpacity
           style={[
@@ -276,15 +426,10 @@ export default function HomeScreen() {
         {/* Footer tip */}
         <Text style={styles.footerTip}>
           {isTracking
-            ? `Hold your phone at eye level for the best posture ${zone.emoji}`
+              ? `Alerts: mild ${Math.round(settings.mildAlertMs / 60000)} min, danger ${Math.round(settings.dangerAlertMs / 60000)} min. Constant angle pauses after ${Math.round(settings.constantSuppressMs / 60000)} min.`
             : '💡 Hold your phone at eye level while using it — your neck will thank you later!'}
         </Text>
       </ScrollView>
-
-      {/* 10-minute posture override overlay */}
-      {showOverlay && (
-        <PostureOverlayScreen zone={zone} onDismiss={handleDismissOverlay} />
-      )}
     </SafeAreaView>
   );
 }
@@ -384,6 +529,53 @@ const styles = StyleSheet.create({
   zoneInterval: {
     color: '#555',
     fontSize: 12,
+  },
+  settingsCard: {
+    width: '100%',
+    backgroundColor: '#1a1a2e',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    gap: 10,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  settingLabel: {
+    color: '#ccc',
+    fontSize: 13,
+    flex: 1,
+  },
+  settingInput: {
+    width: 70,
+    backgroundColor: '#0f0f1a',
+    borderWidth: 1,
+    borderColor: '#2a2a3d',
+    borderRadius: 8,
+    color: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  resetSettingsButton: {
+    marginTop: 4,
+    alignSelf: 'flex-end',
+    backgroundColor: '#2a2a3d',
+    borderWidth: 1,
+    borderColor: '#6c63ff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  resetSettingsText: {
+    color: '#6c63ff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   statsRow: {
     flexDirection: 'row',

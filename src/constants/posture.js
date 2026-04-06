@@ -25,7 +25,7 @@ export const POSTURE_ZONES = {
     key: 'MILD',
     label: 'Mild Strain',
     minAngle: 25,
-    maxAngle: 35,
+    maxAngle: 45,
     color: '#ffeb3b',       // yellow
     bgColor: '#3d3300',
     reminderMs: 3 * 60 * 1000, // 3 minutes
@@ -43,7 +43,7 @@ export const POSTURE_ZONES = {
   MODERATE: {
     key: 'MODERATE',
     label: 'Moderate Strain',
-    minAngle: 35,
+    minAngle: 45,
     maxAngle: 45,
     color: '#ff9800',       // orange
     bgColor: '#3d1f00',

@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import * as Device from 'expo-device';
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import { getRandomMessage } from '../constants/posture';
 
 // Configure how notifications appear when app is in foreground
@@ -82,6 +82,37 @@ export async function sendPostureAlert(zone) {
     },
     trigger: null, // Fire immediately
   });
+}
+
+export async function schedulePostureAlertIn(zone, secondsFromNow, titlePrefix = '') {
+  const message = getRandomMessage(zone);
+
+  const id = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `${titlePrefix}${zone.emoji} NeckGuard`,
+      body: message,
+      data: { zone: zone.key },
+      ...(Platform.OS === 'android' && {
+        channelId: zone.key === 'CRITICAL' ? 'critical-alerts' : 'posture-alerts',
+      }),
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: Math.max(1, Math.floor(secondsFromNow)),
+      repeats: false,
+    },
+  });
+
+  return id;
+}
+
+export async function cancelNotificationById(notificationId) {
+  if (!notificationId) return;
+  await Notifications.cancelScheduledNotificationAsync(notificationId);
+}
+
+export function triggerWarningVibration() {
+  Vibration.vibrate([0, 300, 160, 300]);
 }
 
 // Cancel all scheduled posture notifications
