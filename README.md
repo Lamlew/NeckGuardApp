@@ -68,4 +68,3 @@ NeckGuard/
 
 - **Background tracking**: On Android, tracking persists in the background via the foreground task. On iOS, background sensor access is OS-limited — keep the screen on for best results, or scheduled notifications will fire as reminders.
 - **Angle calibration**: The angle is measured from vertical. Hold your phone the way you normally would — the app auto-detects your tilt.
-- **Assets**: Replace `assets/icon.png`, `assets/adaptive-icon.png`, and `assets/notification-icon.png` with your own 1024×1024 PNG icons before building.
