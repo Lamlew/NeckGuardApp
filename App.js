@@ -7,6 +7,7 @@ import HomeScreen from './src/screens/HomeScreen';
 const Stack = createStackNavigator();
 
 export default function App() {
+
   return (
     <NavigationContainer
       theme={{
