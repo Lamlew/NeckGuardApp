@@ -86,6 +86,13 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, []);
 
+  // ─── Cancel notifications when paused ─────────────────────────────────────
+  useEffect(() => {
+    if (isPausedByConstantAngle) {
+      cancelAllNotifications();
+    }
+  }, [isPausedByConstantAngle]);
+
   // ─── Session timer ────────────────────────────────────────────────────────
   useEffect(() => {
     if (isTracking) {
